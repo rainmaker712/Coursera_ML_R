@@ -1,0 +1,187 @@
+---
+title: "Project_Submission_R_RyanShin"
+author: "Ryan Shin"
+date: "2015년 11월 22일"
+output: html_document
+---
+
+#Project Overview
+
+This project is about to predict whether they did the exercise or not based on users data (6 participants). Data is from Jawbone up, Nike FuelBand, and Fitbit, IoT devices in these days and based on the belt, forearm, arm, and dumbell. Also, they were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+#Citation
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+#Data Input
+Input Data from  http://groupware.les.inf.puc-rio.br/har.
+
+```{r}
+#Load Data
+
+setwd("C:/Users/Ryan/Google Drive/코세라_R_머신러닝")
+training <- "pml-training.csv"
+testing <- "pml-testing.csv"
+
+# Import the data and treating empty value as NA
+df_training <- read.csv(training, na.strings=c("NA",""), header=TRUE)
+colnames_train <- colnames(df_training)
+df_testing <- read.csv(testing, na.strings=c("NA",""), header=TRUE)
+colnames_test <- colnames(df_testing)
+
+
+
+# Check column names (except classe and problem_id) are identical in the training and test set.
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+```
+
+#Load Packages
+```{r}
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+
+install.packages("rattle")
+install.packages("rpart.plot")
+install.packages("randomForest")
+
+
+```
+
+
+#Preprocessing Data
+
+Usually this takes most of time for data scientist. By figuring out unnecessary col. and NA values, it would be more efficient to figure out.
+
+```{r}
+#View(is.na(df_training))
+#View(is.na(df_testing))
+
+#Count How many missing data exisit in df_trainig Divide by Classe?
+dim(df_training)
+sapply(df_training, function(x) sum(is.na(x)))
+summary(df_training$user_name)
+
+#Use Amelia to see the missing data
+require(Amelia)
+missmap(df_training, main = "HAD(Human Activity Recognition) - Missing Data Map",
+        col = c("yellow", "black"), legend = F)
+
+#build a function for each col.
+non_NA <- function(x) {
+  as.vector(apply(x, 2, function(x) length(which(!is.na(x)))))
+}
+col_num <- non_NA(df_training)
+drops <- c() 
+for (cnt in 1:length(col_num)) {
+  if (col_num[cnt] < nrow(df_training)) {
+    drops <- c(drops, colnames_train[cnt])
+  }
+}
+
+  
+#Drop and remove first 7 col.
+
+df_training <- df_training[,!(names(df_training) %in% drops)]
+df_training <- df_training[,8:length(colnames(df_training))]
+
+df_testing <- df_testing[,!(names(df_testing) %in% drops)]
+df_testing <- df_testing[,8:length(colnames(df_testing))]
+
+df_train_colnames <- colnames(df_training) #show the col only to think
+df_test_colnames <- colnames(df_testing)
+
+# Check column names are identical in the training and test set.
+all.equal(df_train_colnames[1:length(df_train_colnames)-1], df_test_colnames[1:length(df_test_colnames)-1])
+
+#Check to figure out nearZerovar
+nzv <- nearZeroVar(df_training, saveMetrics = T)
+
+#Remove variables with more than 70% NA
+
+df_training2 <- df_training
+for(i in 1:length(df_training)) {
+    if( sum( is.na( df_training[, i] ) ) /nrow(df_training) >= .7) {
+        for(j in 1:length(df_training2)) {
+            if( length( grep(names(df_training[i]), names(df_training2)[j]) ) == 1)  {
+                df_training2 <- df_training2[ , -j]
+            }   
+        } 
+    }
+}
+
+View(df_training2)
+
+# Set back to the original variable name
+```
+
+
+#Data Exploration
+**To find the pattern of df-training & df-testing dataset.**
+
+> 5 classes (sitting-down, standing-up, standing, walking, and sitting) collected on 8 hours of activities of 4 healthy subjects.
+Class A: Exactly according to the specification
+Class B: throwing the elbows to the front
+Class C: lifting the dumbbell only halfway
+Class D: lowering the dumbbell only halfway
+Class E; and throwing the hips to the front (Class E).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3sCeq4XbN
+![Overview of data category](http://groupware.les.inf.puc-rio.br/static/WLE/on-body-sensing-schema.png)
+
+*Divide dataset 60:40 (commmon ratio)*
+
+```{r}
+inTrain <- createDataPartition(y=df_training$classe, p=0.6, list=FALSE)
+training <- df_training[inTrain, ]; testing <- df_training[-inTrain,] #Subset data
+```
+
+
+#Algorithm
+```{r}
+# Divide the given training set into 4 roughly equal sets.
+set.seed(666)
+ids_small <- createDataPartition(y=df_training$classe, p=0.25, list=FALSE)
+df_small1 <- df_training[ids_small,]
+df_remainder <- df_training[-ids_small,]
+set.seed(666)
+ids_small <- createDataPartition(y=df_remainder$classe, p=0.33, list=FALSE)
+df_small2 <- df_remainder[ids_small,]
+df_remainder <- df_remainder[-ids_small,]
+set.seed(666)
+ids_small <- createDataPartition(y=df_remainder$classe, p=0.5, list=FALSE)
+df_small3 <- df_remainder[ids_small,]
+df_small4 <- df_remainder[-ids_small,]
+# Divide each of these 4 sets into training (60%) and test (40%) sets.
+set.seed(666)
+inTrain <- createDataPartition(y=df_small1$classe, p=0.6, list=FALSE)
+df_small_training1 <- df_small1[inTrain,]
+df_small_testing1 <- df_small1[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small2$classe, p=0.6, list=FALSE)
+df_small_training2 <- df_small2[inTrain,]
+df_small_testing2 <- df_small2[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small3$classe, p=0.6, list=FALSE)
+df_small_training3 <- df_small3[inTrain,]
+df_small_testing3 <- df_small3[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small4$classe, p=0.6, list=FALSE)
+df_small_training4 <- df_small4[inTrain,]
+df_small_testing4 <- df_small4[-inTrain,]
+```
+
+#Eval
+
+```{r}
+# Train on training set 1 of 4 with no extra features.
+set.seed(666)
+modFit <- train(df_small_training1$classe ~ ., data = df_small_training1, method="rpart")
+print(modFit, digits=3)
+
+
+
+```
+
+
